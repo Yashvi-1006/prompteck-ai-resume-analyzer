@@ -1,5 +1,4 @@
-# Version 2 — Structured Prompt (Intermediate Iteration)
-**Date:** 28 March 2026  
+# Version 2 — Structured Prompt (Intermediate Iteration)  
 **Tool/Model:** Generative LLM with JSON Mode  
 **Prompt ID:** `PROMPT_V2_STRUCTURED`
 
