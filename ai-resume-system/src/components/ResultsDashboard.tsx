@@ -16,7 +16,6 @@ import {
   GraduationCap, 
   Layers, 
   Code2, 
-  ArrowRight,
   ShieldAlert,
   Loader2,
   AlertCircle

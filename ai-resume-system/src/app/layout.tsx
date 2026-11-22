@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Prompteck AI Resume Analyzer",
   description: "AI-Powered Resume Feedback and Job Match Analyzer using a 6-stage Gemini prompt engineering pipeline",
+  openGraph: {
+    title: "Prompteck AI Resume Analyzer",
+    description: "AI-Powered Resume Feedback and Job Match Analyzer using a 6-stage Gemini prompt engineering pipeline",
+  },
 };
 
 export default function RootLayout({

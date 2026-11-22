@@ -4,14 +4,8 @@ import { useState } from 'react';
 import { 
   Loader2, 
   Sparkles, 
-  CheckCircle2, 
   FileCheck, 
   Target, 
-  TrendingUp, 
-  Layers, 
-  ShieldCheck, 
-  BookOpen, 
-  Code,
   ArrowRight,
   RefreshCw
 } from 'lucide-react';
@@ -148,7 +142,7 @@ export default function Home() {
     formData.append('jd', jobDescription);
 
     const controller = new AbortController();
-    const requestTimeout = setTimeout(() => controller.abort(), 90_000);
+    const requestTimeout = setTimeout(() => controller.abort(), 120_000);
 
     try {
       const response = await fetch('/api/analyze', {
@@ -315,7 +309,7 @@ export default function Home() {
       console.error(error);
       if (error instanceof DOMException && error.name === 'AbortError') {
         setErrorMessage(
-          'Resume analysis timed out after 90 seconds. Please retry or use pasted resume text.'
+          'Resume analysis timed out after 120 seconds. Please retry or use pasted resume text.'
         );
       } else if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
         setErrorMessage(

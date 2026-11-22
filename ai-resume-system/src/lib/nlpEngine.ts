@@ -13,8 +13,8 @@ const MODEL_NAME = 'gemini-4-hydrogen';
 const FALLBACK_MODEL_NAME = 'gemini-3.1-flash-lite';
 const PIPELINE_VERSION = 'v3-programmatic-rubric';
 const DETERMINISTIC_SEED = 42;
-const PRIMARY_TIMEOUT_MS = 10_000;
-const FALLBACK_TIMEOUT_MS = 14_000;
+const PRIMARY_TIMEOUT_MS = 20_000;
+const FALLBACK_TIMEOUT_MS = 28_000;
 const PRIMARY_COOLDOWN_MS = 180_000;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 50;
@@ -704,7 +704,7 @@ export class TransformerEngine {
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
-        timeout: FALLBACK_TIMEOUT_MS,
+        timeout: 30_000,
         headers: {
           'User-Agent': 'aistudio-build',
         },
@@ -782,22 +782,52 @@ export class TransformerEngine {
     responseSchema: Schema,
     stageTimingsMs: Record<string, number>
   ): Promise<T> {
-    const attempts: Array<{ model: string; delayBeforeMs: number; timeoutMs: number }> =
+    const attempts: Array<{
+      model: string;
+      thinkingLevel: ThinkingLevel;
+      delayBeforeMs: number;
+      timeoutMs: number;
+    }> =
       this.activeModel === MODEL_NAME
         ? [
-            { model: MODEL_NAME, delayBeforeMs: 0, timeoutMs: PRIMARY_TIMEOUT_MS },
-            { model: FALLBACK_MODEL_NAME, delayBeforeMs: 150, timeoutMs: FALLBACK_TIMEOUT_MS },
-            { model: FALLBACK_MODEL_NAME, delayBeforeMs: 800, timeoutMs: FALLBACK_TIMEOUT_MS },
+            {
+              model: MODEL_NAME,
+              thinkingLevel: ThinkingLevel.LOW,
+              delayBeforeMs: 0,
+              timeoutMs: PRIMARY_TIMEOUT_MS,
+            },
+            {
+              model: FALLBACK_MODEL_NAME,
+              thinkingLevel: ThinkingLevel.MINIMAL,
+              delayBeforeMs: 300,
+              timeoutMs: FALLBACK_TIMEOUT_MS,
+            },
+            {
+              model: FALLBACK_MODEL_NAME,
+              thinkingLevel: ThinkingLevel.MINIMAL,
+              delayBeforeMs: 1800,
+              timeoutMs: FALLBACK_TIMEOUT_MS,
+            },
           ]
         : [
-            { model: FALLBACK_MODEL_NAME, delayBeforeMs: 0, timeoutMs: FALLBACK_TIMEOUT_MS },
-            { model: FALLBACK_MODEL_NAME, delayBeforeMs: 800, timeoutMs: FALLBACK_TIMEOUT_MS },
+            {
+              model: FALLBACK_MODEL_NAME,
+              thinkingLevel: ThinkingLevel.MINIMAL,
+              delayBeforeMs: 0,
+              timeoutMs: FALLBACK_TIMEOUT_MS,
+            },
+            {
+              model: FALLBACK_MODEL_NAME,
+              thinkingLevel: ThinkingLevel.MINIMAL,
+              delayBeforeMs: 1500,
+              timeoutMs: FALLBACK_TIMEOUT_MS,
+            },
           ];
 
     const stageStart = Date.now();
 
     for (let i = 0; i < attempts.length; i++) {
-      const { model, delayBeforeMs, timeoutMs } = attempts[i];
+      const { model, thinkingLevel, delayBeforeMs, timeoutMs } = attempts[i];
       if (delayBeforeMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, delayBeforeMs));
       }
@@ -814,7 +844,7 @@ export class TransformerEngine {
             responseMimeType: 'application/json',
             responseSchema,
             seed: DETERMINISTIC_SEED,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+            thinkingConfig: { thinkingLevel },
             abortSignal: attemptController.signal,
             httpOptions: {
               timeout: timeoutMs,
@@ -891,6 +921,9 @@ export class TransformerEngine {
         }
 
         if (formatted.isTransient && i < attempts.length - 1) {
+          if (formatted.statusCode === 429) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
           continue;
         }
         stageTimingsMs[stageName] = Date.now() - stageStart;

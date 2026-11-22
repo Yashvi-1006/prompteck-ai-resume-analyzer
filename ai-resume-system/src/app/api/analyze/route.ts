@@ -4,59 +4,68 @@ import {
   AnalysisPipelineError,
   AnalysisProgressEvent,
 } from '@/lib/nlpEngine';
-import { PDFParse } from 'pdf-parse';
 import PDFParser from 'pdf2json';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function extractPdfTextWithPdfParse(buffer: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: buffer });
-  try {
-    const result = await parser.getText();
-    return result.text ?? '';
-  } finally {
-    await parser.destroy().catch(() => undefined);
-  }
-}
-
 async function extractPdfTextWithPdf2Json(buffer: Buffer): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     type PdfParserConstructor = new (context: unknown, needRawText?: number) => {
-      on: (event: string, cb: (err?: { parserError?: unknown }) => void) => void;
+      on: (event: string, cb: (err?: { parserError?: unknown; message?: string }) => void) => void;
       getRawTextContent: () => string;
       parseBuffer: (buf: Buffer) => void;
     };
     const PdfParserCtor = PDFParser as unknown as PdfParserConstructor;
     const pdfParser = new PdfParserCtor(null, 1);
 
-    pdfParser.on('pdfParser_dataError', (errData) =>
-      reject(errData?.parserError ?? new Error('PDF parsing error'))
-    );
+    let isResolved = false;
+
+    pdfParser.on('pdfParser_dataError', (errData) => {
+      if (isResolved) return;
+      isResolved = true;
+      const errMsg =
+        typeof errData === 'string'
+          ? errData
+          : errData?.parserError || errData?.message || 'PDF parsing error';
+      reject(new Error(String(errMsg)));
+    });
+
     pdfParser.on('pdfParser_dataReady', () => {
+      if (isResolved) return;
+      isResolved = true;
       try {
         const rawText = pdfParser.getRawTextContent();
-        const decoded = decodeURIComponent(rawText);
-        resolve(decoded);
-      } catch {
-        resolve(pdfParser.getRawTextContent());
+        let decoded = rawText;
+        try {
+          decoded = decodeURIComponent(rawText);
+        } catch {
+          // fallback to raw text if decodeURIComponent fails on unescaped sequences
+        }
+        // Clean up pdf2json formatting artifacts (e.g. carriage returns, multiple spaces)
+        const cleaned = decoded
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .replace(/[ \t]+/g, ' ')
+          .trim();
+        resolve(cleaned);
+      } catch (err) {
+        reject(err);
       }
     });
 
-    pdfParser.parseBuffer(buffer);
+    try {
+      pdfParser.parseBuffer(buffer);
+    } catch (err) {
+      if (!isResolved) {
+        isResolved = true;
+        reject(err);
+      }
+    }
   });
 }
 
 async function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
-  try {
-    const text = await extractPdfTextWithPdfParse(buffer);
-    if (text && text.trim().length > 0) {
-      return text;
-    }
-  } catch (err) {
-    console.warn('Primary PDF parser (pdf-parse) failed, attempting pdf2json fallback:', err);
-  }
-
   return extractPdfTextWithPdf2Json(buffer);
 }
 
@@ -120,7 +129,7 @@ export async function POST(req: NextRequest) {
       try {
         resumeText = await extractTextFromPdfBuffer(buffer);
       } catch (error) {
-        console.error('Error parsing PDF:', error);
+        console.error('Error parsing PDF with pdf2json:', error);
         return NextResponse.json(
           { error: 'Failed to parse PDF document. The file may be password protected or corrupted.' },
           { status: 400 }
