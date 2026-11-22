@@ -1,0 +1,8 @@
+{
+  "name": "Prompteck AI Resume Analyzer",
+  "description": "AI-Powered Resume Feedback and Job Match Analyzer using a 6-stage Gemini prompt engineering pipeline",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

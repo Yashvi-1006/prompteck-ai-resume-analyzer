@@ -17,7 +17,9 @@ import {
   Layers, 
   Code2, 
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { ComprehensiveAnalysisResult } from '@/lib/analysisTypes';
 
@@ -29,6 +31,8 @@ interface ResultsDashboardProps {
 export default function ResultsDashboard({ result, onReset }: ResultsDashboardProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'matched' | 'partial' | 'missing' | 'unverifiable'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return '#10b981'; // emerald green
@@ -51,8 +55,62 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
     setTimeout(() => setCopiedId(null), 2500);
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setPdfError(null);
+    setIsDownloadingPdf(true);
+
+    try {
+      const response = await fetch('/api/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(result),
+      });
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+      if (!response.ok) {
+        if (contentType.includes('application/json')) {
+          const errPayload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(
+            errPayload?.error || `PDF export failed (HTTP ${response.status}). Please try again.`
+          );
+        }
+        throw new Error(`PDF export failed (HTTP ${response.status}). Please try again.`);
+      }
+
+      if (!contentType.includes('application/pdf')) {
+        throw new Error('Server returned an unexpected format instead of a PDF file.');
+      }
+
+      const blob = await response.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error('Generated PDF file was empty. Please retry.');
+      }
+
+      const disposition = response.headers.get('content-disposition') || '';
+      const filenameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^\s";]+)/i);
+      const filename = filenameMatch?.[1]?.replace(/"/g, '') || 'Prompteck_Resume_Analysis_Report.pdf';
+
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch (error: unknown) {
+      console.error('PDF download error:', error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to download PDF report. Please try again.';
+      setPdfError(message);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   return (
@@ -77,6 +135,26 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
         </div>
       )}
 
+      {/* PDF Export Error Banner */}
+      {pdfError && (
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.15)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          padding: '1rem 1.25rem',
+          borderRadius: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem',
+          color: '#fca5a5',
+          fontSize: '0.9rem'
+        }}>
+          <AlertCircle size={20} color="#ef4444" />
+          <div>
+            <strong>PDF Export Error:</strong> {pdfError}
+          </div>
+        </div>
+      )}
+
       {/* Hero Overview Card */}
       <div className="glass-panel" style={{ padding: '2.5rem', borderRadius: '20px', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem' }}>
@@ -88,6 +166,11 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
             <h2 style={{ fontSize: '2rem', fontWeight: 800, color: 'white', marginBottom: '0.5rem' }}>
               Job Match Evaluation
             </h2>
+            {result.candidateProfile && (
+              <div style={{ fontSize: '0.85rem', color: '#a5b4fc', fontWeight: 600, marginBottom: '0.5rem' }}>
+                {result.candidateProfile.candidateName} • Target: {result.candidateProfile.targetJobTitle}
+              </div>
+            )}
             <p style={{ color: '#9ca3af', fontSize: '0.95rem', maxWidth: '600px', lineHeight: 1.6 }}>
               {result.executiveSummary}
             </p>
@@ -95,26 +178,40 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <button
-              onClick={handlePrint}
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
-                background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                background: isDownloadingPdf ? 'rgba(99, 102, 241, 0.45)' : 'linear-gradient(135deg, #4f46e5, #7c3aed)',
                 color: 'white',
                 border: 'none',
                 padding: '0.75rem 1.5rem',
                 borderRadius: '12px',
                 fontWeight: 600,
-                cursor: 'pointer',
+                cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
                 boxShadow: '0 8px 20px -4px rgba(99, 102, 241, 0.4)',
                 transition: 'transform 0.2s',
                 fontSize: '0.9rem'
               }}
-              onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-              onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+              onMouseOver={(e) => {
+                if (!isDownloadingPdf) e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
             >
-              <Download size={18} /> Download Official PDF Report
+              {isDownloadingPdf ? (
+                <>
+                  <Loader2 className="animate-spin" size={18} /> Generating PDF...
+                </>
+              ) : (
+                <>
+                  <Download size={18} /> Download Official PDF Report
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -191,7 +288,8 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
             Official Weighted Scoring Rubric (35 / 25 / 15 / 15 / 10)
           </h3>
           <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>
-            Evaluated according to the SCSE4041 Prompt Engineering Milestone 2 multi-criteria specification.
+            {result.meta?.scoringMethodology ||
+              'Evaluated according to the SCSE4041 Prompt Engineering Milestone 2 multi-criteria specification.'}
           </p>
         </div>
 
@@ -337,7 +435,7 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
             Resume Bullet Point Optimization (Google X-Y-Z Formula)
           </h3>
           <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>
-            Transformed into <em>"Accomplished [X] as measured by [Y], by doing [Z]"</em>. Uses honest bracketed placeholders <code>[X%]</code> instead of inventing metrics.
+            Transformed into <em>&ldquo;Accomplished [X] as measured by [Y], by doing [Z]&rdquo;</em>. Uses honest bracketed placeholders <code>[X%]</code> instead of inventing metrics.
           </p>
         </div>
 
@@ -374,13 +472,13 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
                 <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '1rem', borderRadius: '10px' }}>
                   <div style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, marginBottom: '0.35rem' }}>ORIGINAL BULLET POINT:</div>
                   <p style={{ fontSize: '0.875rem', color: '#9ca3af', fontStyle: 'italic', lineHeight: 1.5 }}>
-                    "{bullet.originalBullet}"
+                    &ldquo;{bullet.originalBullet}&rdquo;
                   </p>
                 </div>
                 <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1rem', borderRadius: '10px' }}>
                   <div style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 700, marginBottom: '0.35rem' }}>IMPROVED GOOGLE X-Y-Z BULLET:</div>
                   <p style={{ fontSize: '0.875rem', color: '#ffffff', fontWeight: 500, lineHeight: 1.5 }}>
-                    "{bullet.improvedBullet}"
+                    &ldquo;{bullet.improvedBullet}&rdquo;
                   </p>
                 </div>
               </div>
@@ -464,29 +562,39 @@ export default function ResultsDashboard({ result, onReset }: ResultsDashboardPr
           lineHeight: 1.7,
           fontStyle: 'italic'
         }}>
-          "{result.tailoredSummary}"
+          &ldquo;{result.tailoredSummary}&rdquo;
         </div>
       </div>
 
       {/* Actions Footer */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '1rem' }}>
         <button
-          onClick={handlePrint}
+          type="button"
+          onClick={handleDownloadPdf}
+          disabled={isDownloadingPdf}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
-            background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+            background: isDownloadingPdf ? 'rgba(99, 102, 241, 0.45)' : 'linear-gradient(135deg, #4f46e5, #7c3aed)',
             color: 'white',
             border: 'none',
             padding: '0.85rem 2rem',
             borderRadius: '99px',
             fontWeight: 600,
-            cursor: 'pointer',
+            cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
             fontSize: '1rem'
           }}
         >
-          <Download size={18} /> Download Official PDF Report
+          {isDownloadingPdf ? (
+            <>
+              <Loader2 className="animate-spin" size={18} /> Generating PDF...
+            </>
+          ) : (
+            <>
+              <Download size={18} /> Download Official PDF Report
+            </>
+          )}
         </button>
         <button
           onClick={onReset}

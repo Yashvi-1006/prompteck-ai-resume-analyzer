@@ -1,0 +1,18 @@
+{
+  "name": "prompteck-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "ai-resume-system"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=ai-resume-system",
+    "build": "npm run build --workspace=ai-resume-system",
+    "start": "npm run start --workspace=ai-resume-system",
+    "lint": "npm run lint --workspace=ai-resume-system"
+  },
+  "dependencies": {
+    "@google/genai": "^3.6.1",
+    "jspdf": "^4.2.1"
+  }
+}

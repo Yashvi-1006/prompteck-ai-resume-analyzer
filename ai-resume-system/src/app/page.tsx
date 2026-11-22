@@ -90,6 +90,7 @@ export default function Home() {
   const [jobDescription, setJobDescription] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<ComprehensiveAnalysisResult | null>(null);
 
@@ -108,20 +109,35 @@ export default function Home() {
       setErrorMessage('Please paste candidate resume text to analyze.');
       return;
     }
-    if (!jobDescription.trim()) {
-      setErrorMessage('Please provide a target job description or select an example preset.');
+    if (mode === 'text' && pastedResume.trim().length < 30) {
+      setErrorMessage(
+        'Resume text is too brief (minimum 30 characters). Please include your skills, education, and projects or experience.'
+      );
+      return;
+    }
+
+    const trimmedJd = jobDescription.trim();
+    if (!trimmedJd) {
+      setErrorMessage(
+        'Please provide a target job description (include role title and required skills, or choose an example above).'
+      );
+      return;
+    }
+    const jdWords = trimmedJd.split(/\s+/).filter(Boolean);
+    if (trimmedJd.length < 10 || (jdWords.length < 2 && trimmedJd.length < 15)) {
+      setErrorMessage(
+        'Job description is too brief to match against. Please include at least a role title and key skills or responsibilities (e.g., "Junior React Developer with TypeScript, REST APIs, and Git").'
+      );
       return;
     }
 
     setIsAnalyzing(true);
-    setAnalysisStep('Initializing 6-Prompt Pipeline (P1: Parsing Entities)...');
+    setElapsedSeconds(0);
+    setAnalysisStep('Extracting resume text & validating inputs...');
 
-    const stepTimers = [
-      setTimeout(() => setAnalysisStep('Executing P2: Extracting Job Requirements & Competency Tiers...'), 600),
-      setTimeout(() => setAnalysisStep('Executing P3: Performing Evidence-Based 4-Tier Skill Classification...'), 1200),
-      setTimeout(() => setAnalysisStep('Executing P4: Transforming Bullet Points with Google X-Y-Z Formula...'), 1800),
-      setTimeout(() => setAnalysisStep('Executing P5 & P6: Synthesizing Weighted Scores & Learning Roadmap...'), 2400)
-    ];
+    const elapsedInterval = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
 
     const formData = new FormData();
     if (mode === 'file' && file) {
@@ -131,26 +147,193 @@ export default function Home() {
     }
     formData.append('jd', jobDescription);
 
+    const controller = new AbortController();
+    const requestTimeout = setTimeout(() => controller.abort(), 90_000);
+
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
+        headers: {
+          Accept: 'application/x-ndjson',
+        },
         body: formData,
+        signal: controller.signal,
       });
 
-      const data = await response.json();
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      const isStream = contentType.includes('application/x-ndjson');
+      const isJson = contentType.includes('application/json');
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to complete resume analysis.');
+      if (!isStream && !isJson) {
+        const rawText = await response.text().catch(() => '');
+        const trimmed = rawText.trim();
+        const lower = trimmed.toLowerCase();
+        const isHtml =
+          contentType.includes('text/html') ||
+          lower.startsWith('<!doctype') ||
+          lower.startsWith('<html');
+
+        if (isHtml && lower.includes('starting server')) {
+          throw new Error(
+            'The analysis server is currently starting up or restarting. Please wait a few seconds and try again.'
+          );
+        }
+
+        throw new Error(
+          isHtml
+            ? `The analysis service returned an unexpected HTML page (HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}). Please refresh and try again.`
+            : `Unexpected response format from the analysis service (HTTP ${response.status}). Please try again.`
+        );
       }
 
-      setResult(data);
-    } catch (error: any) {
+      if (isStream) {
+        if (!response.ok) {
+          throw new Error(`Failed to start resume analysis (HTTP ${response.status}).`);
+        }
+        if (!response.body) {
+          throw new Error('Analysis stream was empty. Please try again.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalResult: ComprehensiveAnalysisResult | null = null;
+
+        const processLine = (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          if (
+            trimmed.toLowerCase().startsWith('<!doctype') ||
+            trimmed.toLowerCase().startsWith('<html')
+          ) {
+            throw new Error(
+              'The analysis service returned an unexpected HTML response. Please refresh and try again.'
+            );
+          }
+
+          let event: {
+            type?: string;
+            stage?: string;
+            message?: string;
+            error?: string;
+            status?: number;
+            data?: Partial<ComprehensiveAnalysisResult>;
+          };
+          try {
+            event = JSON.parse(trimmed);
+          } catch {
+            throw new Error('Received a malformed progress packet from the analysis service.');
+          }
+
+          if (event.type === 'progress' && event.message) {
+            setAnalysisStep(event.message);
+          } else if (event.type === 'error') {
+            throw new Error(
+              event.error ||
+                `Failed to complete resume analysis (HTTP ${event.status ?? 500}).`
+            );
+          } else if (event.type === 'result' && event.data) {
+            const payload = event.data;
+            if (
+              typeof payload.overallMatchScore !== 'number' ||
+              !payload.scoringRubric ||
+              !payload.skillClassification
+            ) {
+              throw new Error(
+                'Analysis response was incomplete. Please retry with your resume and job description.'
+              );
+            }
+            finalResult = payload as ComprehensiveAnalysisResult;
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) {
+            buffer += decoder.decode(value, { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              processLine(line);
+            }
+          }
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              processLine(buffer);
+            }
+            break;
+          }
+        }
+
+        if (!finalResult) {
+          throw new Error(
+            'The analysis connection closed before the final report was delivered. Please try again.'
+          );
+        }
+
+        setResult(finalResult);
+        return;
+      }
+
+      // Standard JSON response path (e.g., 400 validation errors)
+      let data: Partial<ComprehensiveAnalysisResult> & { error?: string; message?: string };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          `Unable to read the analysis response (invalid JSON, HTTP ${response.status}). Please try again.`
+        );
+      }
+
+      if (!response.ok) {
+        const fallbackByStatus =
+          response.status === 400
+            ? 'Please check your resume and job description inputs and try again.'
+            : response.status === 408
+            ? 'The AI analysis timed out while processing. Please retry.'
+            : response.status === 429
+            ? 'Analysis rate limit reached. Please wait a moment and try again.'
+            : response.status >= 500
+            ? 'The AI analysis service encountered a temporary issue. Please try again.'
+            : `Failed to complete resume analysis (HTTP ${response.status}).`;
+        throw new Error(data?.error || data?.message || fallbackByStatus);
+      }
+
+      if (
+        typeof data?.overallMatchScore !== 'number' ||
+        !data.scoringRubric ||
+        !data.skillClassification
+      ) {
+        throw new Error(
+          'Analysis response was incomplete. Please retry with your resume and job description.'
+        );
+      }
+
+      setResult(data as ComprehensiveAnalysisResult);
+    } catch (error: unknown) {
       console.error(error);
-      setErrorMessage(error?.message || 'Failed to analyze resume. Please try again.');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setErrorMessage(
+          'Resume analysis timed out after 90 seconds. Please retry or use pasted resume text.'
+        );
+      } else if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
+        setErrorMessage(
+          'Unable to reach the analysis server. Please verify your connection and try again.'
+        );
+      } else {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Failed to analyze resume. Please try again.';
+        setErrorMessage(message);
+      }
     } finally {
-      stepTimers.forEach(clearTimeout);
+      clearTimeout(requestTimeout);
+      clearInterval(elapsedInterval);
       setIsAnalyzing(false);
       setAnalysisStep('');
+      setElapsedSeconds(0);
     }
   };
 
@@ -363,7 +546,7 @@ export default function Home() {
                   </div>
 
                   <textarea
-                    placeholder="Paste employer Job Description here (Role summary, required skills, tools, experience, responsibilities)..."
+                    placeholder={`Paste target Job Description here, or click an example above.\n\nExample:\nRole: Junior Full-Stack Software Engineer\nRequired Skills: React, TypeScript, Node.js, PostgreSQL, Docker, Git\nResponsibilities: Build RESTful APIs, develop responsive UI components, and write unit tests.\nEducation: Bachelor's in Computer Science or equivalent project experience.`}
                     value={jobDescription}
                     onChange={(e) => setJobDescription(e.target.value)}
                     style={{
@@ -384,7 +567,7 @@ export default function Home() {
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#9ca3af' }}>
                     <span>{jobDescription.trim().split(/\s+/).filter(Boolean).length} words • {jobDescription.length} characters</span>
-                    <span>Required for comparative matching</span>
+                    <span>Include role title, skills &amp; responsibilities</span>
                   </div>
                 </div>
 
@@ -438,7 +621,7 @@ export default function Home() {
                 {isAnalyzing && analysisStep && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a5b4fc', fontSize: '0.9rem', fontStyle: 'italic' }}>
                     <RefreshCw className="animate-spin" size={16} />
-                    {analysisStep}
+                    <span>{analysisStep} ({elapsedSeconds}s)</span>
                   </div>
                 )}
               </div>
