@@ -1,5 +1,4 @@
 # Version 1 — Baseline Prompt (Conception / Milestone 1)
-**Date:** 10 March 2026  
 **Tool/Model:** Zero-Shot Generative LLM  
 **Prompt ID:** `PROMPT_V1_BASELINE`
 
