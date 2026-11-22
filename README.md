@@ -3,12 +3,10 @@
 **Team ID:** PE-B13-45  
 **Problem Pool:** C9  
 **Team Members:**  
-- Ashirwad Sahu (Enrollment: `[To be confirmed]`)  
-- Atul Chauhan (Enrollment: `[To be confirmed]`)  
-- Shah Yashvi Giriraj (Enrollment: `S24CSEU2409`)  
-- Vaishnavi Mishra (Enrollment: `S24CSEU2419`)  
-
-**Team Leader:** [Requires confirmation from team]
+- Ashirwad Sahu   
+- Atul Chauhan   
+- Shah Yashvi Giriraj   
+- Vaishnavi Mishra   
 
 ---
 
