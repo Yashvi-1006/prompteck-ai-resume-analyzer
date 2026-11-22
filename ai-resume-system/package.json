@@ -1,3 +1,4 @@
+
 {
   "name": "ai-resume-system",
   "version": "0.1.0",
@@ -9,6 +10,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/genai": "latest",
+    "jspdf": "latest",
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
     "pdf-parse": "^2.4.5",
